@@ -28,15 +28,31 @@ interface FoodItem {
   error?: string;
 }
 
-const calorieGoal = 2000;
-
 export default function Index() {
   const [foodItems, setFoodItems] = useState<FoodItem[]>([]);
   const [foodName, setFoodName] = useState("");
   const [selectedFood, setSelectedFood] = useState<FoodItem | null>(null);
+  const [calorieGoal, setCalorieGoal] = useState(2000);
   const navigation = useNavigation();
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["25%", "50%"], []);
+
+  // Load calorie goal from settings
+  useFocusEffect(
+    useCallback(() => {
+      const loadSettings = async () => {
+        try {
+          const goal = await AsyncStorage.getItem("calorieGoal");
+          if (goal) {
+            setCalorieGoal(parseInt(goal));
+          }
+        } catch (error) {
+          console.error("Failed to load calorie goal", error);
+        }
+      };
+      loadSettings();
+    }, []),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -134,11 +150,24 @@ export default function Index() {
   const fetchFoodData = async (foodName: string, id: string) => {
     console.log(foodName);
     try {
-      const response = await fetch(
-        `https://cal-track-api.vercel.app/api/cal-track?food=${encodeURIComponent(
-          foodName,
-        )}`,
-      );
+      // Get API keys from storage
+      const [geminiKey, sciraKey, useCustom] = await Promise.all([
+        AsyncStorage.getItem("geminiApiKey"),
+        AsyncStorage.getItem("sciraApiKey"),
+        AsyncStorage.getItem("useCustomKeys"),
+      ]);
+
+      const useCustomKeys = useCustom ? JSON.parse(useCustom) : false;
+
+      // Build URL with optional API keys
+      let url = `https://cal-track-api.vercel.app/api/cal-track?food=${encodeURIComponent(foodName)}`;
+
+      if (useCustomKeys && geminiKey && sciraKey) {
+        url += `&geminiKey=${encodeURIComponent(geminiKey)}&sciraKey=${encodeURIComponent(sciraKey)}`;
+      }
+
+      const response = await fetch(url);
+
       if (!response.ok) {
         throw new Error("Food not found");
       }
@@ -185,10 +214,6 @@ export default function Index() {
     setFoodName("");
   };
 
-  // const handleDeleteFood = (id: string) => {
-  //   setFoodItems((prevItems) => prevItems.filter((item) => item.id !== id));
-  // };
-
   const renderFoodItem = ({ item }: { item: FoodItem }) => {
     return (
       <TouchableOpacity onPress={() => handlePresentModalPress(item)}>
@@ -207,6 +232,10 @@ export default function Index() {
       </TouchableOpacity>
     );
   };
+
+  // Calculate progress percentage
+  const progressPercentage = Math.min((totalCalories / calorieGoal) * 100, 100);
+  const isOverGoal = totalCalories > calorieGoal;
 
   return (
     <View style={styles.container}>
@@ -233,8 +262,26 @@ export default function Index() {
         contentContainerStyle={styles.listContent}
       />
       <View style={styles.summaryContainer}>
-        <Text style={styles.summaryText}>Total: {totalCalories} kcal</Text>
-        <Text style={styles.summaryText}>Goal: {calorieGoal} kcal</Text>
+        <View style={styles.calorieInfo}>
+          <Text style={styles.summaryText}>Total: {totalCalories} kcal</Text>
+          <Text style={styles.summaryText}>Goal: {calorieGoal} kcal</Text>
+        </View>
+        <View style={styles.progressBarContainer}>
+          <View
+            style={[
+              styles.progressBar,
+              {
+                width: `${progressPercentage}%`,
+                backgroundColor: isOverGoal ? "#ff4444" : "#4CAF50",
+              },
+            ]}
+          />
+        </View>
+        <Text style={styles.remainingText}>
+          {isOverGoal
+            ? `${totalCalories - calorieGoal} kcal over goal`
+            : `${calorieGoal - totalCalories} kcal remaining`}
+        </Text>
       </View>
       <BottomSheetModal
         ref={bottomSheetModalRef}
@@ -303,6 +350,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
+    paddingBottom: 140, // Extra space for the larger summary
   },
   foodItem: {
     flexDirection: "row",
@@ -328,9 +376,7 @@ const styles = StyleSheet.create({
     color: "#888",
   },
   summaryContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    padding: 24,
+    padding: 20,
     backgroundColor: "#fff",
     borderTopWidth: 1,
     borderTopColor: "#e0e0e0",
@@ -339,9 +385,31 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
+  calorieInfo: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginBottom: 12,
+  },
   summaryText: {
     fontSize: 18,
     fontWeight: "bold",
+  },
+  progressBarContainer: {
+    height: 8,
+    backgroundColor: "#e0e0e0",
+    borderRadius: 4,
+    overflow: "hidden",
+    marginBottom: 8,
+  },
+  progressBar: {
+    height: "100%",
+    borderRadius: 4,
+  },
+  remainingText: {
+    textAlign: "center",
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
   },
   bottomSheetContent: {
     padding: 20,
