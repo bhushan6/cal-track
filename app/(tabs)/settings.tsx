@@ -8,6 +8,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from "react-native";
 import { useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -20,9 +21,24 @@ export default function SettingsScreen() {
   const [useCustomKeys, setUseCustomKeys] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Load settings on mount
+  const [recipes, setRecipes] = useState<Record<string, any>>({});
+  const [isEditing, setIsEditing] = useState(false);
+  const [selectedRecipe, setSelectedRecipe] = useState<string | null>(null);
+  const [editedName, setEditedName] = useState("");
+
+  const loadRecipes = async () => {
+    try {
+      const storedRecipes = await AsyncStorage.getItem("recipes");
+      if (storedRecipes) setRecipes(JSON.parse(storedRecipes));
+    } catch (error) {
+      console.error("Failed to load recipes", error);
+    }
+  };
+
+  // Load settings and recipes on mount
   useEffect(() => {
     loadSettings();
+    loadRecipes();
   }, []);
 
   const loadSettings = async () => {
@@ -115,6 +131,38 @@ export default function SettingsScreen() {
         },
       ],
     );
+  };
+
+  const handleDeleteRecipe = async (name: string) => {
+    const updated = { ...recipes };
+    delete updated[name];
+    setRecipes(updated);
+    await AsyncStorage.setItem("recipes", JSON.stringify(updated));
+    Alert.alert("Deleted", `"${name}" removed from recipes.`);
+  };
+
+  const handleEditRecipe = (name: string) => {
+    setSelectedRecipe(name);
+    setEditedName(name);
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedRecipe) return;
+    const updated = { ...recipes };
+
+    // Prevent overwriting existing recipe if renamed
+    const recipeData = updated[selectedRecipe];
+    delete updated[selectedRecipe];
+    updated[editedName.toLowerCase()] = { ...recipeData, name: editedName };
+
+    setRecipes(updated);
+    await AsyncStorage.setItem("recipes", JSON.stringify(updated));
+
+    setIsEditing(false);
+    setSelectedRecipe(null);
+    setEditedName("");
+    Alert.alert("Updated", "Recipe name updated successfully!");
   };
 
   return (
@@ -248,7 +296,90 @@ export default function SettingsScreen() {
             limits.
           </Text>
         </View>
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="restaurant" size={24} color="#007bff" />
+            <Text style={styles.sectionTitle}>My Recipes</Text>
+          </View>
+          <Text style={styles.sectionDescription}>
+            View and manage your saved recipes
+          </Text>
+
+          {Object.keys(recipes).length === 0 ? (
+            <Text style={{ color: "#888" }}>No recipes saved yet</Text>
+          ) : (
+            Object.keys(recipes).map((key) => (
+              <View key={key} style={styles.recipeItem}>
+                <View style={{ flex: 1, flexBasis: 1, flexShrink: 1 }}>
+                  <Text style={styles.recipeName}>{recipes[key].name}</Text>
+                  <Text style={styles.recipeCalories}>
+                    {recipes[key].calories ?? 0} kcal
+                  </Text>
+                </View>
+                <View style={styles.recipeActions}>
+                  <TouchableOpacity onPress={() => handleEditRecipe(key)}>
+                    <Ionicons name="create-outline" size={20} color="#007bff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteRecipe(key)}>
+                    <Ionicons name="trash-outline" size={20} color="red" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
+      {/* Recipes Section */}
+
+      <Modal
+        visible={isEditing}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setIsEditing(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>Edit Recipe Name</Text>
+            <TextInput
+              value={editedName}
+              onChangeText={setEditedName}
+              style={{
+                height: 48,
+                borderColor: "#ddd",
+                borderWidth: 1,
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                fontSize: 16,
+                backgroundColor: "#f9f9f9",
+              }}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={{
+                  ...styles.button,
+                  ...styles.saveButton,
+                  paddingHorizontal: 16,
+                }}
+                onPress={handleSaveEdit}
+              >
+                <Text style={styles.buttonText}>Save</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  ...styles.button,
+                  ...styles.resetButton,
+                  paddingHorizontal: 16,
+                }}
+                onPress={() => setIsEditing(false)}
+              >
+                <Text style={[styles.buttonText, styles.resetButtonText]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -401,6 +532,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 8,
     marginTop: 8,
+    marginBottom: 8,
     gap: 10,
   },
   infoText: {
@@ -408,5 +540,58 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#666",
     lineHeight: 18,
+  },
+  recipeItem: {
+    display: "flex",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f9f9f9",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  recipeName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    flex: 1,
+    flexBasis: 1,
+    flexShrink: 1,
+  },
+  recipeCalories: {
+    fontSize: 13,
+    color: "#777",
+  },
+  recipeActions: {
+    flexDirection: "row",
+    gap: 16,
+    // borderColor: "#ccc",
+    // borderStyle: "solid",
+    // borderWidth: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContainer: {
+    width: "85%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 20,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 12,
+    color: "#333",
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginTop: 16,
   },
 });

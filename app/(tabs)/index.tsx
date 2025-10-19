@@ -6,6 +6,7 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { Ionicons } from "@expo/vector-icons";
@@ -36,6 +37,23 @@ export default function Index() {
   const navigation = useNavigation();
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["25%", "50%"], []);
+
+  const [recipes, setRecipes] = useState<Record<string, FoodItem>>({});
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  const loadRecipesFromStorage = useCallback(() => {
+    const loadRecipes = async () => {
+      try {
+        const stored = await AsyncStorage.getItem("recipes");
+        if (stored) setRecipes(JSON.parse(stored));
+      } catch (error) {
+        console.error("Failed to load recipes", error);
+      }
+    };
+    loadRecipes();
+  }, []);
+
+  useFocusEffect(loadRecipesFromStorage);
 
   // Load calorie goal from settings
   useFocusEffect(
@@ -200,8 +218,35 @@ export default function Index() {
     }
   };
 
-  const handleAddFood = () => {
+  const handleAddFood = async () => {
     if (foodName.trim() === "") return;
+
+    if (foodName.startsWith("@")) {
+      const recipeName = foodName.slice(1).trim().toLowerCase();
+
+      try {
+        const storedRecipes = await AsyncStorage.getItem("recipes");
+        const recipes = storedRecipes ? JSON.parse(storedRecipes) : {};
+
+        const recipe = recipes[recipeName];
+        if (!recipe) {
+          Alert.alert(
+            "Recipe Not Found",
+            `No saved recipe for "${recipeName}"`,
+          );
+          return;
+        }
+
+        // Clone recipe to add as new entry
+        const newFood = { ...recipe, id: Math.random().toString() };
+        setFoodItems((prevItems) => [...prevItems, newFood]);
+        setFoodName("");
+        return;
+      } catch (error) {
+        console.error("Failed to load recipe", error);
+        return;
+      }
+    }
 
     const newFood: FoodItem = {
       id: Math.random().toString(),
@@ -212,6 +257,23 @@ export default function Index() {
     setFoodItems((prevItems) => [...prevItems, newFood]);
     fetchFoodData(foodName, newFood.id);
     setFoodName("");
+  };
+
+  const handleCreateRecipe = async (food: FoodItem) => {
+    try {
+      const storedRecipes = await AsyncStorage.getItem("recipes");
+      const recipes = storedRecipes ? JSON.parse(storedRecipes) : {};
+
+      // Save by normalized name
+      const key = food.name.trim().toLowerCase();
+      recipes[key] = food;
+
+      await AsyncStorage.setItem("recipes", JSON.stringify(recipes));
+      Alert.alert("Recipe Saved", `"${food.name}" saved for quick reuse!`);
+      loadRecipesFromStorage();
+    } catch (error) {
+      console.error("Failed to save recipe", error);
+    }
   };
 
   const renderFoodItem = ({ item }: { item: FoodItem }) => {
@@ -237,6 +299,24 @@ export default function Index() {
   const progressPercentage = Math.min((totalCalories / calorieGoal) * 100, 100);
   const isOverGoal = totalCalories > calorieGoal;
 
+  const handleTextChange = (text: string) => {
+    setFoodName(text);
+
+    if (text.startsWith("@")) {
+      const query = text.slice(1).toLowerCase();
+      if (query.length > 0) {
+        const matches = Object.keys(recipes).filter((name) =>
+          name.includes(query),
+        );
+        setSuggestions(matches);
+      } else {
+        setSuggestions(Object.keys(recipes));
+      }
+    } else {
+      setSuggestions([]); // Hide when not typing @
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.addFoodContainer}>
@@ -244,7 +324,7 @@ export default function Index() {
           style={styles.input}
           placeholder="Enter food here"
           value={foodName}
-          onChangeText={setFoodName}
+          onChangeText={handleTextChange}
         />
 
         <TouchableOpacity
@@ -255,6 +335,23 @@ export default function Index() {
           <Ionicons size={28} name="add" color="white" />
         </TouchableOpacity>
       </View>
+      {suggestions.length > 0 && (
+        <View style={styles.suggestionsContainer}>
+          {suggestions.map((name) => (
+            <TouchableOpacity
+              key={name}
+              onPress={() => {
+                setFoodName(`@${name}`);
+                setSuggestions([]);
+              }}
+              style={styles.suggestionItem}
+            >
+              <Ionicons name="restaurant-outline" size={16} color="#007bff" />
+              <Text style={styles.suggestionText}>{name}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
       <FlatList
         data={foodItems}
         keyExtractor={(item) => item.id}
@@ -310,6 +407,18 @@ export default function Index() {
                   {source}
                 </Text>
               ))}
+              <TouchableOpacity
+                style={styles.recipeButton}
+                onPress={() => handleCreateRecipe(selectedFood)}
+              >
+                <Ionicons
+                  name="save-outline"
+                  size={20}
+                  color="white"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.recipeButtonText}>Create Recipe</Text>
+              </TouchableOpacity>
             </>
           )}
         </BottomSheetView>
@@ -347,6 +456,31 @@ const styles = StyleSheet.create({
     backgroundColor: "#007bff",
     justifyContent: "center",
     alignItems: "center",
+  },
+  suggestionsContainer: {
+    backgroundColor: "#fff",
+    position: "absolute",
+    top: 60,
+    left: 16,
+    right: 16,
+    borderRadius: 8,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    paddingVertical: 4,
+    zIndex: 10,
+  },
+  suggestionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  suggestionText: {
+    marginLeft: 8,
+    fontSize: 15,
+    color: "#333",
   },
   listContent: {
     padding: 16,
@@ -438,5 +572,19 @@ const styles = StyleSheet.create({
   sourceItem: {
     paddingVertical: 2,
     color: "#007bff",
+  },
+  recipeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#007bff",
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  recipeButtonText: {
+    color: "white",
+    fontWeight: "600",
+    fontSize: 16,
   },
 });
